@@ -7,11 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	. "ingestion-orchid/internal"
 )
 
 type Event struct {
@@ -22,6 +23,13 @@ type Event struct {
 	Metadata  map[string]string `json:"metadata"`
 }
 
+type User struct {
+	SlackID    string     `json:"slack_id"`
+	JoinDate   *time.Time `json:"timestamp,omitempty"`
+	Timezone   string     `json:"timezone,omitempty"`
+	JoinOrigin string     `json:"join_origin"`
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -30,11 +38,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	apiKeys := loadAPIKeys()
-	allowedEvents, err := loadAllowedEvents(ctx, db)
+	apiKeys := LoadAPIKeys()
+	allowedEvents, err := LoadAllowedEvents(ctx, db)
 
 	r := chi.NewRouter()
-	r.Use(apiKeyAuth(apiKeys))
+	r.Use(ApiKeyAuth(apiKeys))
 
 	r.Post("/instrumentation/event", eventHandler(db, allowedEvents))
 
@@ -84,61 +92,4 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 
 		w.WriteHeader(http.StatusAccepted)
 	}
-}
-
-func apiKeyAuth(validKeys map[string]struct{}) func(http.Handler) http.Handler {
-	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				http.Error(w, "missing API key", http.StatusUnauthorized)
-				return
-			}
-
-			if _, present := validKeys[key]; !present {
-				http.Error(w, "invalid API key", http.StatusUnauthorized)
-				return
-			}
-
-			h.ServeHTTP(w, r)
-
-		})
-	}
-}
-
-func loadAPIKeys() map[string]struct{} {
-	keys := make(map[string]struct{})
-	raw := os.Getenv("INGEST_API_KEYS")
-
-	for _, k := range strings.Split(raw, ",") {
-		k = strings.TrimSpace(k)
-		if k != "" {
-			keys[k] = struct{}{}
-		}
-	}
-
-	return keys
-}
-
-func loadAllowedEvents(ctx context.Context, db *pgxpool.Pool) (map[string]struct{}, error) {
-	rows, err := db.Query(ctx, `
-	SELECT event_name
-	FROM allowed_events`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	events := make(map[string]struct{})
-
-	for rows.Next() {
-		var name string
-		err := rows.Scan(&name)
-		if err != nil {
-			return nil, err
-		}
-		events[name] = struct{}{}
-	}
-
-	return events, rows.Err()
 }
