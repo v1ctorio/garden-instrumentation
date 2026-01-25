@@ -26,8 +26,8 @@ type Event struct {
 type User struct {
 	SlackID    string     `json:"slack_id"`
 	JoinDate   *time.Time `json:"timestamp,omitempty"`
-	Timezone   string     `json:"timezone,omitempty"`
-	JoinOrigin string     `json:"join_origin"`
+	Timezone   *string    `json:"timezone"`
+	JoinOrigin *string    `json:"join_origin,omitempty"`
 }
 
 func main() {
@@ -45,10 +45,58 @@ func main() {
 	r.Use(ApiKeyAuth(apiKeys))
 
 	r.Post("/instrumentation/event", eventHandler(db, allowedEvents))
+	r.Post("/instrumentation/user", userHandler(db))
 
 	fmt.Println("Hello chat, listening on :8400")
 
 	http.ListenAndServe(":8400", r)
+}
+
+func insertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
+	ts := time.Now().UTC()
+	jo := "unknown"
+	tz := "unknown/unknown"
+
+	if u.JoinDate != nil {
+		ts = *u.JoinDate
+	}
+	if u.JoinOrigin != nil {
+		jo = *u.JoinOrigin
+	}
+
+	if u.Timezone != nil {
+		tz = *u.Timezone
+	}
+
+	_, err := db.Exec(ctx, `
+	INSERT INTO users (slack_id, join_date, timezone, join_origin)
+	values ($1, $2, $3, $4)
+	`, u.SlackID, ts, tz, jo)
+
+	return err
+}
+
+func userHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var u User
+
+		if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if u.SlackID == "" {
+			http.Error(w, "malformed request", http.StatusBadRequest)
+			return
+		}
+
+		if err := insertUser(r.Context(), db, u); err != nil {
+			http.Error(w, "failed to store user", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	}
 }
 
 func insertEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
@@ -58,7 +106,7 @@ func insertEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
 	}
 
 	_, err := db.Exec(ctx, `
-		INSERT INTO events (event_time, user_id, event_name, program, metadata)
+		INSERT INTO events (event_time, slack_id, event_name, program, metadata)
 		VALUES ($1, $2, $3, $4, $5)
 	`, ts, e.SlackID, e.EventName, e.Program, e.Metadata)
 	return err
