@@ -42,10 +42,15 @@ func main() {
 	allowedEvents, err := LoadAllowedEvents(ctx, db)
 
 	r := chi.NewRouter()
-	r.Use(ApiKeyAuth(apiKeys))
 
-	r.Post("/instrumentation/event", eventHandler(db, allowedEvents))
-	r.Post("/instrumentation/user", userHandler(db))
+	r.Get("/health", healthcheckHandler(db))
+
+	r.Route("/instrumentation", func(r chi.Router) {
+		r.Use(ApiKeyAuth(apiKeys))
+		r.Post("/instrumentation/user", userHandler(db))
+		r.Post("/instrumentation/event", eventHandler(db, allowedEvents))
+
+	})
 
 	fmt.Println("Hello chat, listening on :8400")
 
@@ -139,5 +144,20 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 		}
 
 		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+func healthcheckHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := db.Ping(r.Context())
+
+		if err != nil {
+			http.Error(w, "bad", http.StatusInternalServerError)
+			fmt.Printf("Healthcheck failed: %v\n", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
 	}
 }
