@@ -47,8 +47,8 @@ func main() {
 
 	r.Route("/instrumentation", func(r chi.Router) {
 		r.Use(ApiKeyAuth(apiKeys))
-		r.Post("/instrumentation/user", userHandler(db))
-		r.Post("/instrumentation/event", eventHandler(db, allowedEvents))
+		r.Post("/user", userHandler(db))
+		r.Post("/event", eventHandler(db, allowedEvents))
 
 	})
 
@@ -100,6 +100,7 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		LogToSlack("New user recorded")
 		w.WriteHeader(http.StatusAccepted)
 	}
 }
@@ -143,6 +144,7 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 			return
 		}
 
+		LogToSlack("New event recorded")
 		w.WriteHeader(http.StatusAccepted)
 	}
 }
