@@ -76,6 +76,11 @@ func SlackEventsHandler(db *pgxpool.Pool, api *slack.Client, signingSecret strin
 				SET timezone=$1, is_restricted=$2
 				WHERE slack_id=$3
 				`, ev.User.TZ, ev.User.IsRestricted, ev.User.ID)
+
+				if err != nil {
+					log.Printf("Failed to update user, %v", err)
+					return
+				}
 			}
 		}
 
