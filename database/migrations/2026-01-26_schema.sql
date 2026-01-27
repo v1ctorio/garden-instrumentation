@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS  events (
     event_time TIMESTAMPTZ NOT NULL,
     slack_id TEXT NOT NULL,
     event_name TEXT NOT NULL,
-    program TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'
 );
 
