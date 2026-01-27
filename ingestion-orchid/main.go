@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/slack-go/slack"
 
 	. "ingestion-orchid/internal"
 )
@@ -30,6 +31,7 @@ type User struct {
 }
 
 func main() {
+
 	ctx := context.Background()
 
 	db, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
@@ -37,12 +39,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	slack_api := slack.New("SLACK_BOT_TOKEN")
 	apiKeys := LoadAPIKeys()
 	allowedEvents, err := LoadAllowedEvents(ctx, db)
 
 	r := chi.NewRouter()
 
 	r.Get("/health", healthcheckHandler(db))
+	r.Post("/slack/events", SlackEventsHandler(db, slack_api, os.Getenv("SLACK_SIGNING_SECRET")))
 
 	r.Route("/instrumentation", func(r chi.Router) {
 		r.Use(ApiKeyAuth(apiKeys))
