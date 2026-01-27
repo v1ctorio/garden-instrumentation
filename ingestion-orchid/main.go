@@ -24,10 +24,11 @@ type Event struct {
 }
 
 type User struct {
-	SlackID    string     `json:"slack_id"`
-	JoinDate   *time.Time `json:"timestamp,omitempty"`
-	Timezone   *string    `json:"timezone"`
-	JoinOrigin *string    `json:"join_origin,omitempty"`
+	SlackID      string     `json:"slack_id"`
+	JoinDate     *time.Time `json:"timestamp,omitempty"`
+	Timezone     *string    `json:"timezone"`
+	JoinOrigin   *string    `json:"join_origin,omitempty"`
+	IsRestricted bool       `json:"is_restricted"`
 }
 
 func main() {
@@ -98,9 +99,9 @@ func insertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
 	}
 
 	_, err = db.Exec(ctx, `
-	INSERT INTO users (slack_id, join_date, timezone, join_origin)
-	values ($1, $2, $3, $4)
-	`, u.SlackID, ts, tz, jo)
+	INSERT INTO users (slack_id, join_date, timezone, join_origin, is_restricted)
+	values ($1, $2, $3, $4, $5)
+	`, u.SlackID, ts, tz, jo, u.IsRestricted)
 
 	return err
 }
