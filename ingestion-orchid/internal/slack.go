@@ -62,7 +62,7 @@ func SlackEventsHandler(db *pgxpool.Pool, api *slack.Client, signingSecret strin
 				SELECT is_restricted
 				FROM users
 				WHERE slack_id=$1
-				`, ev.User.ID).Scan(uIsRestricted)
+				`, ev.User.ID).Scan(&uIsRestricted)
 				if err != nil {
 					log.Printf("Failed to query updated user %v", err)
 					return

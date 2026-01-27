@@ -39,7 +39,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	slack_api := slack.New("SLACK_BOT_TOKEN")
+	slack_api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
 	apiKeys := LoadAPIKeys()
 	allowedEvents, err := LoadAllowedEvents(ctx, db)
 
