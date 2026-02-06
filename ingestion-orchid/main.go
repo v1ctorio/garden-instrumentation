@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,21 +14,6 @@ import (
 
 	. "ingestion-orchid/internal"
 )
-
-type Event struct {
-	SlackID   string            `json:"slack_id"`
-	EventName string            `json:"event_name"`
-	Timestamp *time.Time        `json:"timestamp,omitempty"`
-	Metadata  map[string]string `json:"metadata"`
-}
-
-type User struct {
-	SlackID      string     `json:"slack_id"`
-	JoinDate     *time.Time `json:"timestamp,omitempty"`
-	Timezone     *string    `json:"timezone"`
-	JoinOrigin   *string    `json:"join_origin,omitempty"`
-	IsRestricted bool       `json:"is_restricted"`
-}
 
 func main() {
 
@@ -61,51 +45,6 @@ func main() {
 	http.ListenAndServe(":8400", r)
 }
 
-func insertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
-	var old_jo string
-	err := db.QueryRow(ctx, `
-	SELECT join_origin from users where slack_id=$1
-	`, u.SlackID).Scan(&old_jo)
-	ts := time.Now().UTC()
-	jo := "unknown"
-	tz := "unknown/unknown"
-
-	if u.JoinDate != nil {
-		ts = *u.JoinDate
-	}
-	if u.JoinOrigin != nil {
-		jo = *u.JoinOrigin
-	}
-
-	if u.Timezone != nil {
-		tz = *u.Timezone
-	}
-
-	if old_jo != "" && jo == "unknown" {
-		return fmt.Errorf("User already registered")
-	}
-
-	if old_jo != "unknown" && jo != "unknown" {
-		return fmt.Errorf("User already registered")
-	}
-
-	if old_jo == "unknown" && jo != "unknown" {
-		_, err = db.Exec(ctx, `
-		UPDATE users
-		SET join_origin=$1
-		WHERE slack_id=$2`,
-			jo, u.SlackID)
-		return err
-	}
-
-	_, err = db.Exec(ctx, `
-	INSERT INTO users (slack_id, join_date, timezone, join_origin, is_restricted)
-	values ($1, $2, $3, $4, $5)
-	`, u.SlackID, ts, tz, jo, u.IsRestricted)
-
-	return err
-}
-
 func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var u User
@@ -120,7 +59,7 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		if err := insertUser(r.Context(), db, u); err != nil {
+		if err := InsertUser(r.Context(), db, u); err != nil {
 			http.Error(w, "failed to store user", http.StatusInternalServerError)
 			return
 		}
@@ -128,19 +67,6 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 		LogToSlack("New user recorded")
 		w.WriteHeader(http.StatusAccepted)
 	}
-}
-
-func insertEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
-	ts := time.Now().UTC()
-	if e.Timestamp != nil {
-		ts = *e.Timestamp
-	}
-
-	_, err := db.Exec(ctx, `
-		INSERT INTO events (event_time, slack_id, event_name, metadata)
-		VALUES ($1, $2, $3, $4)
-	`, ts, e.SlackID, e.EventName, e.Metadata)
-	return err
 }
 
 func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFunc {
@@ -164,7 +90,7 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 			e.Metadata = map[string]string{}
 		}
 
-		if err := insertEvent(r.Context(), db, e); err != nil {
+		if err := InsertEvent(r.Context(), db, e); err != nil {
 			http.Error(w, "failed to store event", http.StatusInternalServerError)
 			return
 		}

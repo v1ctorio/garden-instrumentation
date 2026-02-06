@@ -2,9 +2,26 @@ package internal
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type Event struct {
+	SlackID   string            `json:"slack_id"`
+	EventName string            `json:"event_name"`
+	Timestamp *time.Time        `json:"timestamp,omitempty"`
+	Metadata  map[string]string `json:"metadata"`
+}
+
+type User struct {
+	SlackID      string     `json:"slack_id"`
+	JoinDate     *time.Time `json:"timestamp,omitempty"`
+	Timezone     *string    `json:"timezone"`
+	JoinOrigin   *string    `json:"join_origin,omitempty"`
+	IsRestricted bool       `json:"is_restricted"`
+}
 
 func LoadAllowedEvents(ctx context.Context, db *pgxpool.Pool) (map[string]struct{}, error) {
 	rows, err := db.Query(ctx, `
@@ -28,4 +45,62 @@ func LoadAllowedEvents(ctx context.Context, db *pgxpool.Pool) (map[string]struct
 	}
 
 	return events, rows.Err()
+}
+
+func InsertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
+	var old_jo string
+	err := db.QueryRow(ctx, `
+	SELECT join_origin from users where slack_id=$1
+	`, u.SlackID).Scan(&old_jo)
+	ts := time.Now().UTC()
+	jo := "unknown"
+	tz := "unknown/unknown"
+
+	if u.JoinDate != nil {
+		ts = *u.JoinDate
+	}
+	if u.JoinOrigin != nil {
+		jo = *u.JoinOrigin
+	}
+
+	if u.Timezone != nil {
+		tz = *u.Timezone
+	}
+
+	if old_jo != "" && jo == "unknown" {
+		return fmt.Errorf("User already registered")
+	}
+
+	if old_jo != "unknown" && jo != "unknown" {
+		return fmt.Errorf("User already registered")
+	}
+
+	if old_jo == "unknown" && jo != "unknown" {
+		_, err = db.Exec(ctx, `
+		UPDATE users
+		SET join_origin=$1
+		WHERE slack_id=$2`,
+			jo, u.SlackID)
+		return err
+	}
+
+	_, err = db.Exec(ctx, `
+	INSERT INTO users (slack_id, join_date, timezone, join_origin, is_restricted)
+	values ($1, $2, $3, $4, $5)
+	`, u.SlackID, ts, tz, jo, u.IsRestricted)
+
+	return err
+}
+
+func InsertEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
+	ts := time.Now().UTC()
+	if e.Timestamp != nil {
+		ts = *e.Timestamp
+	}
+
+	_, err := db.Exec(ctx, `
+		INSERT INTO events (event_time, slack_id, event_name, metadata)
+		VALUES ($1, $2, $3, $4)
+	`, ts, e.SlackID, e.EventName, e.Metadata)
+	return err
 }

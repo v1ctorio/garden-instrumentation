@@ -48,11 +48,13 @@ func SlackEventsHandler(db *pgxpool.Pool, api *slack.Client, signingSecret strin
 			}
 			w.Header().Set("Content-Type", "text")
 			w.Write([]byte(r.Challenge))
+
 		case slackevents.CallbackEvent:
 			w.WriteHeader(http.StatusOK)
 			innerEvent := eventsAPIEvent.InnerEvent
 			fmt.Println("Received inner slack event:", innerEvent.Type)
 			switch ev := innerEvent.Data.(type) {
+
 			case *slackevents.UserChangeEvent:
 				if ev.User.IsRestricted {
 					return
@@ -81,6 +83,8 @@ func SlackEventsHandler(db *pgxpool.Pool, api *slack.Client, signingSecret strin
 					log.Printf("Failed to update user, %v", err)
 					return
 				}
+			case slackevents.MessageEvent:
+
 			}
 		}
 
