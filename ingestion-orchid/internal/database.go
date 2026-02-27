@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -92,15 +93,25 @@ func InsertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
 	return err
 }
 
-func InsertEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
+func RecordEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
 	ts := time.Now().UTC()
 	if e.Timestamp != nil {
 		ts = *e.Timestamp
 	}
+	var table string
 
-	_, err := db.Exec(ctx, `
-		INSERT INTO events (event_time, slack_id, event_name, metadata)
+	switch {
+	case slices.Contains(ValidMultiEntryEvents, e.EventName):
+		table = "events"
+	case slices.Contains(ValidSingleEntryEvents, e.EventName):
+		table = "single_entry_events"
+	default:
+		return fmt.Errorf("invalid event name provided")
+	}
+
+	_, err := db.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s (event_time, slack_id, event_name, metadata)
 		VALUES ($1, $2, $3, $4)
-	`, ts, e.SlackID, e.EventName, e.Metadata)
+	`, table), ts, e.SlackID, e.EventName, e.Metadata)
 	return err
 }

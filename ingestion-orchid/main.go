@@ -90,7 +90,7 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 			e.Metadata = map[string]string{}
 		}
 
-		if err := InsertEvent(r.Context(), db, e); err != nil {
+		if err := RecordEvent(r.Context(), db, e); err != nil {
 			http.Error(w, "failed to store event", http.StatusInternalServerError)
 			return
 		}
