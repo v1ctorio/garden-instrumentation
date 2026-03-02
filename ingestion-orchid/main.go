@@ -15,6 +15,7 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/slack-go/slack"
 
+	"ingestion-orchid/config"
 	. "ingestion-orchid/internal"
 )
 
@@ -41,6 +42,7 @@ func main() {
 
 	r.Get("/health", healthcheckHandler(db))
 	r.Post("/slack/events", SlackEventsHandler(db, slack_api, os.Getenv("SLACK_SIGNING_SECRET")))
+	r.Get("/recognized-events", advertiseRecognizedEvents)
 
 	r.Route("/instrumentation", func(r chi.Router) {
 		r.Use(ApiKeyAuth(apiKeys))
@@ -130,4 +132,12 @@ func healthcheckHandler(db *pgxpool.Pool) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	}
+}
+
+func advertiseRecognizedEvents(w http.ResponseWriter, r *http.Request) {
+
+	events := config.RecognizedEvents
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(events)
 }
