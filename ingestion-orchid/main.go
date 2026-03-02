@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,7 +28,6 @@ func main() {
 
 	slack_api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
 	apiKeys := LoadAPIKeys()
-	allowedEvents, err := LoadAllowedEvents(ctx, db)
 
 	r := chi.NewRouter()
 
@@ -36,7 +37,7 @@ func main() {
 	r.Route("/instrumentation", func(r chi.Router) {
 		r.Use(ApiKeyAuth(apiKeys))
 		r.Post("/user", userHandler(db))
-		r.Post("/event", eventHandler(db, allowedEvents))
+		r.Post("/event", eventHandler(db))
 
 	})
 
@@ -54,13 +55,22 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		slog.Info("Received request to record user", "user", u)
+
 		if u.SlackID == "" {
 			http.Error(w, "malformed request", http.StatusBadRequest)
 			return
 		}
 
+		if u.JoinTimestamp == nil {
+			// Replace with new go 1.26 fancy feature new()
+			now := time.Now().UTC()
+			u.JoinTimestamp = &now
+		}
+
 		if err := InsertUser(r.Context(), db, u); err != nil {
 			http.Error(w, "failed to store user", http.StatusInternalServerError)
+			slog.Error("Failed to record user", "error", err)
 			return
 		}
 
@@ -69,7 +79,7 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFunc {
+func eventHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var e Event
 
@@ -77,13 +87,11 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
+		slog.Info("Received request to record event", "event", e)
 
-		if _, ok := allowed[e.EventName]; !ok {
-			http.Error(w, "unknwon event_name", http.StatusBadRequest)
-		}
-
-		if e.SlackID == "" || e.EventName == "" {
+		if e.SlackID == "" || e.EventKind == "" {
 			http.Error(w, "malformed request", http.StatusBadRequest)
+			return
 		}
 
 		if e.Metadata == nil {
@@ -92,6 +100,7 @@ func eventHandler(db *pgxpool.Pool, allowed map[string]struct{}) http.HandlerFun
 
 		if err := RecordEvent(r.Context(), db, e); err != nil {
 			http.Error(w, "failed to store event", http.StatusInternalServerError)
+			slog.Error("Failed to record event", "error", err)
 			return
 		}
 

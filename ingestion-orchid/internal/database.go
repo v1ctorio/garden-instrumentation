@@ -3,115 +3,101 @@ package internal
 import (
 	"context"
 	"fmt"
-	"slices"
+	"log/slog"
 	"time"
+
+	"ingestion-orchid/config"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Event struct {
 	SlackID   string            `json:"slack_id"`
-	EventName string            `json:"event_name"`
+	EventKind string            `json:"event_kind"`
 	Timestamp *time.Time        `json:"timestamp,omitempty"`
 	Metadata  map[string]string `json:"metadata"`
 }
 
 type User struct {
-	SlackID      string     `json:"slack_id"`
-	JoinDate     *time.Time `json:"timestamp,omitempty"`
-	Timezone     *string    `json:"timezone"`
-	JoinOrigin   *string    `json:"join_origin,omitempty"`
-	IsRestricted bool       `json:"is_restricted"`
-}
-
-func LoadAllowedEvents(ctx context.Context, db *pgxpool.Pool) (map[string]struct{}, error) {
-	rows, err := db.Query(ctx, `
-	SELECT event_name
-	FROM allowed_events`)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	events := make(map[string]struct{})
-
-	for rows.Next() {
-		var name string
-		err := rows.Scan(&name)
-		if err != nil {
-			return nil, err
-		}
-		events[name] = struct{}{}
-	}
-
-	return events, rows.Err()
+	SlackID       string            `json:"slack_id"`
+	JoinTimestamp *time.Time        `json:"join_timestamp,omitempty"`
+	JoinReason    *string           `json:"join_reason,omitempty"`
+	Timezone      *string           `json:"timezone"`
+	IsRestricted  bool              `json:"is_restricted"`
+	Metadata      map[string]string `json:"metadata"`
 }
 
 func InsertUser(ctx context.Context, db *pgxpool.Pool, u User) error {
-	var old_jo string
-	err := db.QueryRow(ctx, `
-	SELECT join_origin from users where slack_id=$1
-	`, u.SlackID).Scan(&old_jo)
 	ts := time.Now().UTC()
-	jo := "unknown"
 	tz := "unknown/unknown"
 
-	if u.JoinDate != nil {
-		ts = *u.JoinDate
+	if u.JoinTimestamp != nil {
+		ts = *u.JoinTimestamp
 	}
-	if u.JoinOrigin != nil {
-		jo = *u.JoinOrigin
-	}
-
 	if u.Timezone != nil {
 		tz = *u.Timezone
 	}
-
-	if old_jo != "" && jo == "unknown" {
-		return fmt.Errorf("User already registered")
+	metadata := u.Metadata
+	if metadata == nil {
+		metadata = map[string]string{}
 	}
 
-	if old_jo != "unknown" && jo != "unknown" {
-		return fmt.Errorf("User already registered")
-	}
-
-	if old_jo == "unknown" && jo != "unknown" {
-		_, err = db.Exec(ctx, `
-		UPDATE users
-		SET join_origin=$1
-		WHERE slack_id=$2`,
-			jo, u.SlackID)
+	_, err := db.Exec(ctx, `
+		INSERT INTO users (slack_id, join_timestamp, join_reason, timezone, is_restricted, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (slack_id) DO UPDATE
+		SET join_reason = EXCLUDED.join_reason,
+			timezone = EXCLUDED.timezone,
+			is_restricted = EXCLUDED.is_restricted,
+			metadata = EXCLUDED.metadata
+	`, u.SlackID, ts, u.JoinReason, tz, u.IsRestricted, metadata)
+	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(ctx, `
-	INSERT INTO users (slack_id, join_date, timezone, join_origin, is_restricted)
-	values ($1, $2, $3, $4, $5)
-	`, u.SlackID, ts, tz, jo, u.IsRestricted)
+	slog.Info("Inserted user", "slack_id", u.SlackID, "metadata", u.Metadata)
+	return nil
 
-	return err
 }
 
 func RecordEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
+	slog.Info("Received event", "event_kind", e.EventKind, "slack_id", e.SlackID)
 	ts := time.Now().UTC()
 	if e.Timestamp != nil {
 		ts = *e.Timestamp
 	}
-	var table string
 
-	switch {
-	case slices.Contains(ValidMultiEntryEvents, e.EventName):
-		table = "events"
-	case slices.Contains(ValidSingleEntryEvents, e.EventName):
-		table = "single_entry_events"
-	default:
-		return fmt.Errorf("invalid event name provided")
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		slog.Error("Failed to init transaction for event ack", "error", err)
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var table string
+	table = config.RecognizedEvents[e.EventKind]
+	if table == "" {
+		slog.Warn("Received unknown event", "event_kind", e.EventKind)
+
+		return fmt.Errorf("Unknown event kind")
 	}
 
-	_, err := db.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s (event_time, slack_id, event_name, metadata)
+	upsertUserSQL := `
+			INSERT INTO users (slack_id, join_timestamp, metadata)
+			VALUES ($1, NOW(), '{"auto_created": true}')
+			ON CONFLICT (slack_id) DO NOTHING;
+		`
+	_, err = tx.Exec(ctx, upsertUserSQL, e.SlackID)
+	if err != nil {
+		slog.Error("Failed to upsert user on event ack", "error", err)
+		return err
+	}
+
+	_, err = tx.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s (event_timestamp, slack_id, event_kind, metadata)
 		VALUES ($1, $2, $3, $4)
-	`, table), ts, e.SlackID, e.EventName, e.Metadata)
+	`, table), ts, e.SlackID, e.EventKind, e.Metadata)
+
+	slog.Info("Recorded event", "event_kind", e.EventKind, "slack_id", e.SlackID, "table", table)
 	return err
 }
