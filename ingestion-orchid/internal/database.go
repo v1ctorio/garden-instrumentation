@@ -101,3 +101,51 @@ func RecordEvent(ctx context.Context, db *pgxpool.Pool, e Event) error {
 	slog.Info("Recorded event", "event_kind", e.EventKind, "slack_id", e.SlackID, "table", table)
 	return err
 }
+
+func PullEvents(ctx context.Context, db *pgxpool.Pool, event_kind string, since *time.Time, limit *int) ([]Event, error) {
+
+	table := config.RecognizedEvents[event_kind]
+	if table == "" {
+		return nil, fmt.Errorf("Unknown event kind: %s", event_kind)
+	}
+	query := fmt.Sprintf("SELECT slack_id, event_kind, event_timestamp, metadata FROM %s WHERE event_kind = %s", table, event_kind)
+	args := []interface{}{}
+	argIdx := 1
+
+	if since != nil {
+		query += fmt.Sprintf(" WHERE event_timestamp >= $%d", argIdx)
+		args = append(args, *since)
+		argIdx++
+	}
+
+	query += " ORDER BY event_timestamp DESC"
+
+	if limit != nil {
+		query += fmt.Sprintf(" LIMIT $%d", argIdx)
+		args = append(args, *limit)
+		argIdx++
+	}
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		var ts time.Time
+		if err := rows.Scan(&e.SlackID, &e.EventKind, &ts, &e.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to scan event row: %w", err)
+		}
+		e.Timestamp = &ts
+		events = append(events, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating event rows: %w", err)
+	}
+
+	return events, nil
+}
