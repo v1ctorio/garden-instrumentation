@@ -73,9 +73,7 @@ func userHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if u.JoinTimestamp == nil {
-			// Replace with new go 1.26 fancy feature new()
-			now := time.Now().UTC()
-			u.JoinTimestamp = &now
+			u.JoinTimestamp = new(time.Now().UTC())
 		}
 
 		if err := InsertUser(r.Context(), db, u); err != nil {
